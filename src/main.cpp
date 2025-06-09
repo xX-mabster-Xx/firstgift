@@ -44,15 +44,14 @@ int main()
 
                 else if (command == "upg")
                 {
-                    tg.checking = true;
+                    tg.checking.store(true, std::memory_order_relaxed);
                     tg.upgrade_loop();
                 }
                 else if (command == "stop")
                 {
 
                     output->info("");
-                    std::lock_guard<std::mutex> lock(tg.checkin_mutex_);
-                    tg.checking = false;
+                    tg.checking.store(false, std::memory_order_relaxed);
                 }
                 else {
                     output->info("[Unknown Command] Use 'on' or 'off'");

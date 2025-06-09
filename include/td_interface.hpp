@@ -31,8 +31,7 @@ public:
     void test();
     void check_for_upgrade();
     void upgrade_loop();
-    bool checking = false;
-    std::mutex checkin_mutex_;
+    std::atomic<bool> checking{false};
     std::atomic<int> sent_{0};
     std::atomic<int> received_{0};
 

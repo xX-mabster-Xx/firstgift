@@ -160,10 +160,8 @@ void TdInterface::process_response(td::ClientManager::Response response)
             auto gift = td::move_tl_object_as<td_api::receivedGift>(obj);
             if (gift->can_be_upgraded_)
             {
-                {
-                    std::lock_guard<std::mutex> lock(checkin_mutex_);
-                    checking = false;
-                }
+            
+                checking.store(false, std::memory_order_relaxed);
                 auto upgrade_gift = td_api::make_object<td_api::upgradeGift>(bb, id, false, 25000);
                 send_query(std::move(upgrade_gift), [this](Object obj)
                            {
@@ -224,6 +222,7 @@ void TdInterface::process_response(td::ClientManager::Response response)
         {
             auto upgrade_result = td::move_tl_object_as<td_api::upgradeGiftResult>(obj);
             spdlog::get("logger")->info("[Upgrade Result] {}", to_string(upgrade_result));
+            checking.store(false, std::memory_order_relaxed);
         }
 
         return;
@@ -328,7 +327,6 @@ void TdInterface::check_for_upgrade()
     while (true) {
         send_query_check();
         {
-            std::lock_guard<std::mutex> lock(checkin_mutex_);
             if (!checking) {
                 break;
             }
@@ -343,7 +341,6 @@ void TdInterface::upgrade_loop()
     {
         send_query_upgrade();
         {
-            std::lock_guard<std::mutex> lock(checkin_mutex_);
             if (!checking)
             {
                 break;
