@@ -1,0 +1,4 @@
+[submodule "td"]
+	shallow = true
+	path = td
+	url = https://github.com/tdlib/td.git
