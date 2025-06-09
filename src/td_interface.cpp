@@ -107,7 +107,10 @@ void TdInterface::send_query_check()
     auto get_gift = td_api::make_object<td_api::getReceivedGift>(id);
     auto query_id = 123456789;
     client_manager_->send(client_id_, query_id, std::move(get_gift));
-    times[sent_] = std::chrono::steady_clock::now();
+    {
+        std::lock_guard lk(times_mutex_);
+        times[sent_] = std::chrono::steady_clock::now();
+    }
     sent_.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -116,7 +119,10 @@ void TdInterface::send_query_upgrade()
     auto upgrade_gift = td_api::make_object<td_api::upgradeGift>(bb, id, true, 25000);
     auto query_id = 987654321;
     client_manager_->send(client_id_, query_id, std::move(upgrade_gift));
-    times[sent_] = std::chrono::steady_clock::now();
+    {
+        std::lock_guard lk(times_mutex_);
+        times[sent_] = std::chrono::steady_clock::now();
+    }
     sent_.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -134,16 +140,23 @@ void TdInterface::process_response(td::ClientManager::Response response)
     if (response.request_id == 0)
     {
         process_update(std::move(response.object));
+        return;
     }
     if (response.request_id == 123456789)
     {
-
-        if (times.find(received_) != times.end())
         {
-            auto now = std::chrono::steady_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - times[received_]);
-            spdlog::get("logger")->info("[Check] Time taken: {} ms | sent/recieved: {}/{}", duration.count(), sent_, received_);
-            times.erase(received_);
+            std::lock_guard lk(times_mutex_);
+
+            auto it = times.find(received_);
+            if (it != times.end())
+            {
+                {
+                    auto now = std::chrono::steady_clock::now();
+                    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second);
+                    spdlog::get("logger")->info("[Check] Time taken: {} ms | sent/recieved: {}/{}", duration.count(), sent_, received_);
+                    times.erase(it);
+                }
+            }
         }
 
         received_.fetch_add(1, std::memory_order_relaxed);
@@ -160,22 +173,22 @@ void TdInterface::process_response(td::ClientManager::Response response)
             auto gift = td::move_tl_object_as<td_api::receivedGift>(obj);
             if (gift->can_be_upgraded_)
             {
-            
+
                 checking.store(false, std::memory_order_relaxed);
                 auto upgrade_gift = td_api::make_object<td_api::upgradeGift>(bb, id, false, 25000);
                 send_query(std::move(upgrade_gift), [this](Object obj)
-                           {
-                                                if (obj->get_id() == td_api::error::ID)
-                                                {
-                                                    auto error = td::move_tl_object_as<td_api::error>(obj);
-                                                    spdlog::get("logger")->error("[Error] {}", to_string(error));
-                                                    return;
-                                                }
-                                                else if (obj->get_id() == td_api::upgradeGiftResult::ID)
-                                                {
-                                                    auto upgrade_result = td::move_tl_object_as<td_api::upgradeGiftResult>(obj);
-                                                    spdlog::get("logger")->info("[Upgrade Result] {}", to_string(upgrade_result));
-                                                } });
+                            {
+                                            if (obj->get_id() == td_api::error::ID)
+                                            {
+                                                auto error = td::move_tl_object_as<td_api::error>(obj);
+                                                spdlog::get("logger")->error("[Error] {}", to_string(error));
+                                                return;
+                                            }
+                                            else if (obj->get_id() == td_api::upgradeGiftResult::ID)
+                                            {
+                                                auto upgrade_result = td::move_tl_object_as<td_api::upgradeGiftResult>(obj);
+                                                spdlog::get("logger")->info("[Upgrade Result] {}", to_string(upgrade_result));
+                                            } });
             }
             spdlog::get("logger")->info("[Gift] ID: {}, Upgradeble: {}, type_id: {}",
                                         gift->received_gift_id_, gift->can_be_upgraded_, gift->gift_->get_id());
@@ -193,14 +206,20 @@ void TdInterface::process_response(td::ClientManager::Response response)
     }
 
     if (response.request_id == 987654321) {
-        if (times.find(received_) != times.end())
         {
-            auto now = std::chrono::steady_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - times[received_]);
-            spdlog::get("logger")->info("[Check] Time taken: {} ms | sent/recieved: {}/{}", duration.count(), sent_, received_);
-            times.erase(received_);
-        }
+            std::lock_guard lk(times_mutex_);
 
+            auto it = times.find(received_);
+            if (it != times.end())
+            {
+                {
+                    auto now = std::chrono::steady_clock::now();
+                    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second);
+                    spdlog::get("logger")->info("[Check] Time taken: {} ms | sent/recieved: {}/{}", duration.count(), sent_, received_);
+                    times.erase(it);
+                }
+            }
+        }
         received_.fetch_add(1, std::memory_order_relaxed);
         auto obj = std::move(response.object);
 

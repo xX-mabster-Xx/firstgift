@@ -37,6 +37,7 @@ public:
 
 private:
     std::unordered_map<int, std::chrono::_V2::steady_clock::time_point> times;
+    std::mutex times_mutex_;
     std::string bb = "";
     std::string id = "689019";
     using Object = td::td_api::object_ptr<td::td_api::Object>;
