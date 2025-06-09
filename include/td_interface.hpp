@@ -30,7 +30,7 @@ public:
     }
     void test();
     void check_for_upgrade();
-
+    void upgrade_loop();
     bool checking = false;
     std::mutex checkin_mutex_;
     std::atomic<int> sent_{0};
@@ -57,6 +57,7 @@ private:
     std::uint64_t next_query_id();
     void send_query(td::td_api::object_ptr<td::td_api::Function> f, std::function<void(Object)> = {});
     void send_query_check();
+    void send_query_upgrade();
     void process_response(td::ClientManager::Response response);
     void process_update(td::td_api::object_ptr<td::td_api::Object> update);
     void on_authorization_state_update();

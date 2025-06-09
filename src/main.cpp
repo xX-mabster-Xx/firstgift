@@ -41,6 +41,12 @@ int main()
                     tg.checking = true;
                     tg.check_for_upgrade();
                 }
+
+                else if (command == "upg")
+                {
+                    tg.checking = true;
+                    tg.upgrade_loop();
+                }
                 else if (command == "stop")
                 {
 

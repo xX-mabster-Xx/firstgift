@@ -111,6 +111,15 @@ void TdInterface::send_query_check()
     sent_.fetch_add(1, std::memory_order_relaxed);
 }
 
+void TdInterface::send_query_upgrade()
+{
+    auto upgrade_gift = td_api::make_object<td_api::upgradeGift>(bb, id, true, 25000);
+    auto query_id = 987654321;
+    client_manager_->send(client_id_, query_id, std::move(upgrade_gift));
+    times[sent_] = std::chrono::steady_clock::now();
+    sent_.fetch_add(1, std::memory_order_relaxed);
+}
+
 std::uint64_t TdInterface::next_query_id()
 {
     return ++current_query_id_;
@@ -133,7 +142,7 @@ void TdInterface::process_response(td::ClientManager::Response response)
         {
             auto now = std::chrono::steady_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - times[received_]);
-            spdlog::get("logger")->info("[Check] Time taken: {} ms", duration.count());
+            spdlog::get("logger")->info("[Check] Time taken: {} ms | sent/recieved: {}/{}", duration.count(), sent_, received_);
             times.erase(received_);
         }
 
@@ -155,7 +164,7 @@ void TdInterface::process_response(td::ClientManager::Response response)
                     std::lock_guard<std::mutex> lock(checkin_mutex_);
                     checking = false;
                 }
-                auto upgrade_gift = td_api::make_object<td_api::upgradeGift>(bb, id, true, 25000);
+                auto upgrade_gift = td_api::make_object<td_api::upgradeGift>(bb, id, false, 25000);
                 send_query(std::move(upgrade_gift), [this](Object obj)
                            {
                                                 if (obj->get_id() == td_api::error::ID)
@@ -175,13 +184,48 @@ void TdInterface::process_response(td::ClientManager::Response response)
 
             auto sentgift = td::move_tl_object_as<td_api::sentGiftRegular>(gift->gift_);
 
-            spdlog::get("logger")->info("[Gift] ID: {}, starCount: {}, total: {}",
-                                        sentgift->gift_->id_, sentgift->gift_->star_count_, sentgift->gift_->total_count_);
+            spdlog::get("logger")->info("[Gift] ID: {}, starCount: {}, total: {}, usc: {}",
+                                        sentgift->gift_->id_, sentgift->gift_->star_count_, sentgift->gift_->total_count_, sentgift->gift_->upgrade_star_count_);
         }
         else
         {
             spdlog::get("logger")->error("[Error] ID = {}", obj->get_id());
         }
+        return;
+    }
+
+    if (response.request_id == 987654321) {
+        if (times.find(received_) != times.end())
+        {
+            auto now = std::chrono::steady_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - times[received_]);
+            spdlog::get("logger")->info("[Check] Time taken: {} ms | sent/recieved: {}/{}", duration.count(), sent_, received_);
+            times.erase(received_);
+        }
+
+        received_.fetch_add(1, std::memory_order_relaxed);
+        auto obj = std::move(response.object);
+
+        if (obj->get_id() == td_api::error::ID)
+        {
+            auto error = td::move_tl_object_as<td_api::error>(obj);
+            if (error->code_ == 400 && error->message_ == "STARGIFT_UPGRADE_UNAVAILABLE") {
+                return;
+            }
+            if (error->code_ == 400 && error->message_ == "Have not enough Telegram Stars")
+            {
+                // spdlog::get("logger")->error("[Error] not enough");
+                return;
+            }
+            spdlog::get("logger")->error("[Error] {}", to_string(error));
+            return;
+        }
+        else if (obj->get_id() == td_api::upgradeGiftResult::ID)
+        {
+            auto upgrade_result = td::move_tl_object_as<td_api::upgradeGiftResult>(obj);
+            spdlog::get("logger")->info("[Upgrade Result] {}", to_string(upgrade_result));
+        }
+
         return;
     }
     else
@@ -289,7 +333,23 @@ void TdInterface::check_for_upgrade()
                 break;
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    }
+}
+
+void TdInterface::upgrade_loop()
+{
+    while (true)
+    {
+        send_query_upgrade();
+        {
+            std::lock_guard<std::mutex> lock(checkin_mutex_);
+            if (!checking)
+            {
+                break;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
     }
 }
 
