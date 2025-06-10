@@ -350,11 +350,11 @@ void TdInterface::check_for_upgrade()
                 break;
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
 
-void TdInterface::upgrade_loop()
+void TdInterface::upgrade_loop(int millis)
 {
     while (true)
     {
@@ -365,7 +365,7 @@ void TdInterface::upgrade_loop()
                 break;
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
 }
 

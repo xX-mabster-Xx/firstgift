@@ -44,8 +44,11 @@ int main()
 
                 else if (command == "upg")
                 {
+                    int millis = 25;
+                    std::cout << "time: ";
+                    std::cin >> millis;
                     tg.checking.store(true, std::memory_order_relaxed);
-                    tg.upgrade_loop();
+                    tg.upgrade_loop(millis);
                 }
                 else if (command == "stop")
                 {
