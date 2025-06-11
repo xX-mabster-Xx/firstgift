@@ -44,11 +44,18 @@ int main()
 
                 else if (command == "upg")
                 {
+                    if (tg.checking.load(std::memory_order_relaxed))
+                    {
+                        output->info("[State] Already checking for upgrades");
+                        continue;
+                    }
                     int millis = 25;
                     std::cout << "time: ";
                     std::cin >> millis;
                     tg.checking.store(true, std::memory_order_relaxed);
-                    tg.upgrade_loop(millis);
+                    std::thread([&tg, millis]()
+                                { tg.upgrade_loop(millis); })
+                        .detach();
                 }
                 else if (command == "stop")
                 {
