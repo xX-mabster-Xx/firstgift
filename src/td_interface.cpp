@@ -1,5 +1,7 @@
 #include "td_interface.hpp"
 
+#include <sstream>
+#include <iomanip>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <iostream>
@@ -206,6 +208,7 @@ void TdInterface::process_response(td::ClientManager::Response response)
     }
 
     if (response.request_id == 987654321) {
+        std::string to_log;
         {
             std::lock_guard lk(times_mutex_);
 
@@ -215,35 +218,42 @@ void TdInterface::process_response(td::ClientManager::Response response)
                 {
                     auto now = std::chrono::steady_clock::now();
                     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second);
-                    spdlog::get("logger")->info("[Check] Time taken: {} ms | sent/recieved: {}/{}", duration.count(), sent_, received_);
+                    std::ostringstream oss;
+                    oss << "Time taken: "
+                        << std::setw(3) << std::right << duration.count() // по умолчанию заполняется пробелами
+                        << " ms | sent/received: "
+                        << sent_
+                        << "/"
+                        << received_ << " ";
+                    to_log += oss.str();
                     times.erase(it);
                 }
             }
         }
         received_.fetch_add(1, std::memory_order_relaxed);
         auto obj = std::move(response.object);
-
         if (obj->get_id() == td_api::error::ID)
         {
             auto error = td::move_tl_object_as<td_api::error>(obj);
             if (error->code_ == 400 && error->message_ == "STARGIFT_UPGRADE_UNAVAILABLE") {
-                return;
+                to_log += "E(400): Unavailable";
             }
-            if (error->code_ == 400 && error->message_ == "Have not enough Telegram Stars")
+            else if (error->code_ == 400 && error->message_ == "Have not enough Telegram Stars")
             {
-                // spdlog::get("logger")->error("[Error] not enough");
-                return;
+                to_log += "E(400): Not enough";
             }
-            spdlog::get("logger")->error("[Error] {}", to_string(error));
-            return;
+            else {
+                to_log += "E(" + std::to_string(error->code_) + "): " + error->message_;
+            }
         }
         else if (obj->get_id() == td_api::upgradeGiftResult::ID)
         {
             auto upgrade_result = td::move_tl_object_as<td_api::upgradeGiftResult>(obj);
-            spdlog::get("logger")->info("[Upgrade Result] {}", to_string(upgrade_result));
+            to_log += "Success: " + to_string(upgrade_result);
             checking.store(false, std::memory_order_relaxed);
         }
 
+        spdlog::get("logger")->info("[Response] {}", to_log);
         return;
     }
     else
