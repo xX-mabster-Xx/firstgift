@@ -155,7 +155,7 @@ void TdInterface::process_response(td::ClientManager::Response response)
                 {
                     auto now = std::chrono::steady_clock::now();
                     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second);
-                    spdlog::get("logger")->info("[Check] Time taken: {} ms | sent/recieved: {}/{}", duration.count(), sent_, received_);
+                    spdlog::get("logger")->info("[Check] Time taken: {} ms | sent/recieved: {}/{}", duration.count(), sent_.load(), received_.load());
                     times.erase(it);
                 }
             }
