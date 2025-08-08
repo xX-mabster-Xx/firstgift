@@ -8,6 +8,7 @@
 #include <sstream>
 #include <codecvt>
 #include <locale>
+#include <filesystem>
 #include <chrono>
 
 
@@ -303,52 +304,123 @@ void TdInterface::process_update(object_ptr<td_api::Object> update)
                                        [](auto &) {}));
 }
 
+
+using td_api::int32;
+using td_api::int64;
+
 void TdInterface::test() {
-    auto me = td_api::make_object<td_api::messageSenderUser>(879292729);
+    namespace fs = std::filesystem;
 
-    std::string bb = "";
-    std::string offset = "";
-    auto get_gifts = td_api::make_object<td_api::getReceivedGifts>(
-        bb,
-        std::move(me),
-        false,
-        false,
-        true,
-        false,
-        true,
-        false,
-        offset,
-        100
-    );
-    send_query(std::move(get_gifts), [this](Object obj)
-               {
-        if (obj->get_id() == td_api::error::ID)
-        {
-            auto error = td::move_tl_object_as<td_api::error>(obj);
-            spdlog::get("logger")->error("[Error] {}", to_string(error));
-            return;
-        }
-        else if (obj->get_id() == td_api::receivedGifts::ID)
-        {
-            auto gifts = td::move_tl_object_as<td_api::receivedGifts>(obj);
-            spdlog::get("logger")->info("[Gifts] Received {} gifts, {}", gifts->total_count_, gifts->next_offset_);
-            for (auto &gift : gifts->gifts_)
-            {
-                spdlog::get("logger")->info("[Gift] ID: {}, Upgradeble: {}, type_id: {}",
-                                            gift->received_gift_id_, gift->can_be_upgraded_, gift->gift_->get_id());
+    const fs::path out_dir = "gifts";
+    std::error_code ec;
+    fs::create_directories(out_dir, ec); // ок, если уже существует
 
-                auto sentgift = td::move_tl_object_as<td_api::sentGiftRegular>(gift->gift_);
+    // Сохраняем стикер под ИМЕНЕМ ПОЛУЧЕННОГО ПОДАРКА (received_gift_id_, это string)
+    auto save_sticker = [this, out_dir](const td_api::object_ptr<td_api::sticker>& st,
+                                        const std::string& received_gift_id) {
+        if (!st || !st->sticker_) return;
 
-                spdlog::get("logger")->info("[Gift] ID: {}, starCount: {}, total: {}",
-                                            sentgift->gift_->id_, sentgift->gift_->star_count_, sentgift->gift_->total_count_);
+        int32 file_id = st->sticker_->id_; // TDLib file_id
+        send_query(td_api::make_object<td_api::downloadFile>(file_id, /*priority*/32, /*offset*/0, /*limit*/0, /*synchronous*/true),
+                   [this, out_dir, received_gift_id](Object obj) {
+            if (obj->get_id() != td_api::file::ID) {
+                spdlog::get("logger")->warn("[StickerSave] not a File (gift_id={})", received_gift_id);
+                return;
             }
-        }
-        else
-        {
-            spdlog::get("logger")->error("[Error] ID = {}", obj->get_id());
-        } });
-}
+            auto file = td::move_tl_object_as<td_api::file>(obj);
+            if (!file->local_ || file->local_->path_.empty()) {
+                spdlog::get("logger")->warn("[StickerSave] no local path (gift_id={})", received_gift_id);
+                return;
+            }
+            try {
+                fs::path src_path(file->local_->path_);
+                fs::path dst = out_dir / (received_gift_id + src_path.extension().string());
+                if (!fs::exists(dst)) {
+                    fs::copy_file(src_path, dst, fs::copy_options::none);
+                }
+            } catch (const std::exception& e) {
+                spdlog::get("logger")->warn("[StickerSave] exception: {} (gift_id={})", e.what(), received_gift_id);
+            }
+        });
+    };
 
+    const int64 owner_user_id = 879292729; // твой user_id как и раньше
+    const std::string bb;                  // business_connection_id пустой
+
+    auto fetch_page = std::make_shared<std::function<void(std::string)>>();
+
+    *fetch_page = [this, fetch_page, owner_user_id, bb, save_sticker](std::string offset) {
+        auto req = td_api::make_object<td_api::getReceivedGifts>(
+            bb,
+            td_api::make_object<td_api::messageSenderUser>(owner_user_id),
+            /*exclude_unsaved*/false,
+            /*exclude_saved*/false,
+            /*exclude_unlimited*/false,
+            /*exclude_limited*/false,
+            /*exclude_upgraded*/false,
+            /*sort_by_price*/false,
+            offset,
+            /*limit*/100
+        );
+
+        send_query(std::move(req), [this, fetch_page, save_sticker](Object obj) {
+            if (obj->get_id() == td_api::error::ID) {
+                auto e = td::move_tl_object_as<td_api::error>(obj);
+                spdlog::get("logger")->error("[getReceivedGifts] {}", to_string(e));
+                return;
+            }
+            if (obj->get_id() != td_api::receivedGifts::ID) {
+                spdlog::get("logger")->error("[getReceivedGifts] unexpected object {}", obj->get_id());
+                return;
+            }
+
+            auto gifts = td::move_tl_object_as<td_api::receivedGifts>(obj);
+
+            for (auto &rg : gifts->gifts_) {
+                if (!rg || !rg->gift_) continue;
+
+                const std::string received_id = rg->received_gift_id_; // <-- ВАЖНО: это string
+
+                switch (rg->gift_->get_id()) {
+                    case td_api::sentGiftRegular::ID: {
+                        auto reg = td::move_tl_object_as<td_api::sentGiftRegular>(rg->gift_);
+                        if (!reg || !reg->gift_) break;
+
+                        // ЛОГ: только id полученного подарка
+                        spdlog::get("output")->info("gift_id={}", received_id);
+
+                        // Сохранить соответствующий стикер под именем id подарка
+                        save_sticker(reg->gift_->sticker_, received_id);
+                        break;
+                    }
+                    case td_api::sentGiftUpgraded::ID: {
+                        auto up = td::move_tl_object_as<td_api::sentGiftUpgraded>(rg->gift_);
+                        if (!up || !up->gift_) break;
+                        const auto &g = up->gift_;
+
+                        const char* model    = (g->model_    && !g->model_->name_.empty())    ? g->model_->name_.c_str()    : "-";
+                        const char* backdrop = (g->backdrop_ && !g->backdrop_->name_.empty()) ? g->backdrop_->name_.c_str() : "-";
+                        const char* symbol   = (g->symbol_   && !g->symbol_->name_.empty())   ? g->symbol_->name_.c_str()   : "-";
+
+                        // ЛОГ: id полученного подарка + важные поля уникального
+                        spdlog::get("output")->info("gift_id={} model={} backdrop={} symbol={}",
+                                                    received_id, model, backdrop, symbol);
+                        break;
+                    }
+                    default:
+                        spdlog::get("output")->info("gift_id={} type={}", received_id, rg->gift_->get_id());
+                        break;
+                }
+            }
+
+            if (!gifts->next_offset_.empty()) {
+                (*fetch_page)(gifts->next_offset_);
+            }
+        });
+    };
+
+    (*fetch_page)("");
+}
 
 
 void TdInterface::check_for_upgrade()
