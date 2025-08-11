@@ -19,7 +19,9 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(cpr)
 
 
-add_subdirectory(td)
+# add_subdirectory(td)
+find_package(Td REQUIRED)
+
 
 include_directories(
     include
