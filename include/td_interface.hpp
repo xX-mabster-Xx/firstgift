@@ -58,6 +58,7 @@ private:
     void send_query(td::td_api::object_ptr<td::td_api::Function> f, std::function<void(Object)> = {});
     void send_query_check();
     void send_query_upgrade();
+    void send_query_upgrade(const std::string&);
     void process_response(td::ClientManager::Response response);
     void process_update(td::td_api::object_ptr<td::td_api::Object> update);
     void on_authorization_state_update();

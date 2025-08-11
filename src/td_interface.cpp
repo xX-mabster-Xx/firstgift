@@ -117,9 +117,21 @@ void TdInterface::send_query_check()
     sent_.fetch_add(1, std::memory_order_relaxed);
 }
 
+void TdInterface::send_query_upgrade(const std::string& received_gift_id)
+{
+    auto upgrade_gift = td_api::make_object<td_api::upgradeGift>(bb, received_gift_id, false, 25000);
+    auto query_id = 900000000 + std::stoi(received_gift_id);
+    client_manager_->send(client_id_, query_id, std::move(upgrade_gift));
+    {
+        std::lock_guard lk(times_mutex_);
+        times[sent_] = std::chrono::steady_clock::now();
+    }
+    sent_.fetch_add(1, std::memory_order_relaxed);
+}
+
 void TdInterface::send_query_upgrade()
 {
-    auto upgrade_gift = td_api::make_object<td_api::upgradeGift>(bb, id, true, 25000);
+    auto upgrade_gift = td_api::make_object<td_api::upgradeGift>(bb, id, false, 25000);
     auto query_id = 987654321;
     client_manager_->send(client_id_, query_id, std::move(upgrade_gift));
     {
@@ -128,6 +140,36 @@ void TdInterface::send_query_upgrade()
     }
     sent_.fetch_add(1, std::memory_order_relaxed);
 }
+
+
+void TdInterface::upgrade_loop(int millis)
+{
+    std::vector<std::string> gifts{
+        "700279", //kirpich-
+        "727170", //soska
+        "689019", //knopka-
+        "691933", //ruki-
+        "700281", //doshik
+        "700280", //govno
+        "716987", //medal
+        "727106", //eskimo 
+        "727107", //plmbir 
+        "716986", //marka
+        "691894" //socks-
+    };
+    int gift_index = 0;
+    while (true)
+    {
+        send_query_upgrade(gifts[gift_index++ % gifts.size()]);
+        {
+            if (!checking)
+            {
+                break;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(millis));
+    }
+} 
 
 std::uint64_t TdInterface::next_query_id()
 {
@@ -208,7 +250,7 @@ void TdInterface::process_response(td::ClientManager::Response response)
         return;
     }
 
-    if (response.request_id == 987654321) {
+    if (response.request_id > 900000000) {
         std::string to_log;
         {
             std::lock_guard lk(times_mutex_);
@@ -220,7 +262,9 @@ void TdInterface::process_response(td::ClientManager::Response response)
                     auto now = std::chrono::steady_clock::now();
                     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second);
                     std::ostringstream oss;
-                    oss << "Time taken: "
+                    oss << "Time taken("
+                        << response.request_id - 900000000
+                        << "): "
                         << std::setw(3) << std::right << duration.count() // по умолчанию заполняется пробелами
                         << " ms | sent/received: "
                         << sent_
@@ -251,7 +295,10 @@ void TdInterface::process_response(td::ClientManager::Response response)
         {
             auto upgrade_result = td::move_tl_object_as<td_api::upgradeGiftResult>(obj);
             to_log += "Success: " + to_string(upgrade_result);
-            checking.store(false, std::memory_order_relaxed);
+            // checking.store(false, std::memory_order_relaxed);
+        }
+        else {
+            to_log += "Recieved: " + std::to_string(obj->get_id());
         }
 
         spdlog::get("logger")->info("[Response] {}", to_log);
@@ -436,20 +483,6 @@ void TdInterface::check_for_upgrade()
     }
 }
 
-void TdInterface::upgrade_loop(int millis)
-{
-    while (true)
-    {
-        send_query_upgrade();
-        {
-            if (!checking)
-            {
-                break;
-            }
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(millis));
-    }
-}
 
 void TdInterface::on_authorization_state_update()
 {
