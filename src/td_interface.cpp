@@ -162,7 +162,7 @@ void TdInterface::upgrade_loop(int millis)
     {
         send_query_upgrade(gifts[gift_index++ % gifts.size()]);
         {
-            if (!checking)
+            if (!checking.load())
             {
                 break;
             }
@@ -332,7 +332,7 @@ void TdInterface::process_update(object_ptr<td_api::Object> update)
                                                return;
                                            if (msg->sender_id_->get_id() != td_api::messageSenderUser::ID)
                                                return;
-                                           if (msg->is_outgoing_)
+                                           if (msg->is_outgoing_ && msg->chat_id_ != 879292729)
                                                return;
                                            auto sender = td_api::move_object_as<td_api::messageSenderUser>(msg->sender_id_);
 
@@ -342,10 +342,30 @@ void TdInterface::process_update(object_ptr<td_api::Object> update)
 
                                            if (msg->content_ && msg->content_->get_id() == td_api::messageText::ID)
                                            {
+                                            
                                                auto text_msg = td_api::move_object_as<td_api::messageText>(msg->content_);
                                                if (text_msg->text_->text_ == "check"){
                                                 test();
                                                }
+
+                                                if (msg->chat_id_ == 879292729 && text_msg->text_->text_ == "stop") {
+                                                    checking.store(false, std::memory_order_relaxed);
+                                                }
+                                                
+                                                else if (msg->chat_id_ == 879292729 && text_msg->text_->text_ == "upg") {
+                                                    
+                                                    if (checking.load(std::memory_order_relaxed))
+                                                    {
+                                                        spdlog::get("output")->info("[State] Already checking for upgrades");
+                                                    }
+                                                    else {
+                                                        int millis = 50;
+                                                        checking.store(true, std::memory_order_relaxed);
+                                                        std::thread([this, millis]()
+                                                                    { upgrade_loop(millis); })
+                                                            .detach();
+                                                    }
+                                                }
                                            }
                                        },
                                        [](auto &) {}));
@@ -475,7 +495,7 @@ void TdInterface::check_for_upgrade()
     while (true) {
         send_query_check();
         {
-            if (!checking) {
+            if (!checking.load()) {
                 break;
             }
         }
