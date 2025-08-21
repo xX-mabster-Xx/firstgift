@@ -1,10 +1,13 @@
 #include "td_interface.hpp"
+#include <fstream>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <nlohmann/json.hpp>
 #include <thread>
+#include <unordered_set>
 
 int main()
 {
@@ -36,12 +39,20 @@ int main()
                 if (command == "on") {
                     output->info("[State] Set to ACTIVE");
                 }
-                else if (command == "check")
+                else if (command == "test")
                 { 
-                    tg.checking = true;
-                    tg.check_for_upgrade();
+                    tg.test();
                 }
-
+                else if (command == "upgrade")
+                { 
+                    std::string identifier;
+                    int price;
+                    std::cout << "ID: ";
+                    std::cin >> identifier;
+                    std::cout << "price: ";
+                    std::cin >> price;
+                    tg.send_query_upgrade(identifier, price);
+                }
                 else if (command == "upg")
                 {
                     if (tg.checking.load(std::memory_order_relaxed))
@@ -49,13 +60,63 @@ int main()
                         output->info("[State] Already checking for upgrades");
                         continue;
                     }
+
                     int millis = 25;
                     std::cout << "time: ";
                     std::cin >> millis;
-                    tg.checking.store(true, std::memory_order_relaxed);
-                    std::thread([&tg, millis]()
-                                { tg.upgrade_loop(millis); })
-                        .detach();
+                    // очистим \n после >>, чтобы не ломать следующий getline
+                    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+                    // === 1) Читаем gifts.json ===
+                    std::vector<std::pair<std::string, std::int64_t>> gifts;
+                    try {
+                        std::ifstream in("gifts.json");
+                        if (!in.is_open()) {
+                            throw std::runtime_error("can't open gifts.json");
+                        }
+                        nlohmann::json j;
+                        in >> j;
+                        for (const auto& e : j) {
+                            gifts.emplace_back(
+                                e.at("id").get<std::string>(),
+                                e.at("price").get<std::int64_t>()
+                            );
+                        }
+                    } catch (const std::exception& e) {
+                        spdlog::get("logger")->error("[upg] failed to read gifts.json: {}", e.what());
+                        continue;
+                    }
+
+                    // === 2) Находим канальные received_gift_id и вызываем test(<chat_id>) ===
+                    auto parse_chat_id = [](const std::string& s) -> std::optional<long long> {
+                        // ожидаем вид "-100XXXXXXXXX_YYYY..."
+                        if (s.rfind("-100", 0) == 0) {
+                            auto pos = s.find('_');
+                            if (pos != std::string::npos) {
+                                try {
+                                    long long chat_id = std::stoll(s.substr(0, pos));
+                                    return chat_id;
+                                } catch (...) {}
+                            }
+                        }
+                        return std::nullopt;
+                    };
+
+                    std::unordered_set<long long> channels;
+                    for (const auto& [id, price] : gifts) {
+                        if (auto cid = parse_chat_id(id)) {
+                            channels.insert(*cid);
+                        }
+                    }
+                    for (auto cid : channels) {
+                        tg.test(static_cast<td_api::int64>(cid));
+                    }
+
+                    // === 3) Стартуем апгрейд-цикл с этим набором ===
+                    tg.checking.store(true, std::memory_order_release);
+                    std::thread([&tg, millis, gifts = std::move(gifts)]() mutable {
+                        tg.upgrade_loop(millis, gifts);
+                    }).detach();
                 }
                 else if (command == "stop")
                 {

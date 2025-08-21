@@ -117,10 +117,46 @@ void TdInterface::send_query_check()
     sent_.fetch_add(1, std::memory_order_relaxed);
 }
 
-void TdInterface::send_query_upgrade(const std::string& received_gift_id)
+void TdInterface::send_query_upgrade(const std::string& received_gift_id, int price = 25000)
 {
-    auto upgrade_gift = td_api::make_object<td_api::upgradeGift>(bb, received_gift_id, false, 25000);
-    auto query_id = 900000000 + std::stoi(received_gift_id);
+    auto upgrade_gift = td_api::make_object<td_api::upgradeGift>(bb, received_gift_id, false, price);
+    
+    constexpr std::int64_t BASE = 900000000;
+    std::int64_t query_id = BASE;
+
+    bool full_parse_ok = false;
+    try {
+        std::size_t idx = 0;
+        long long v = std::stoll(received_gift_id, &idx, 10);
+        if (idx == received_gift_id.size() && v >= 0) {
+            query_id = BASE + static_cast<std::int64_t>(v);
+            full_parse_ok = true;
+        }
+    } catch (...) {
+    }
+
+    if (!full_parse_ok) {
+        const std::string& s = received_gift_id;
+
+        std::size_t j = s.size();
+        while (j > 0 && std::isdigit(static_cast<unsigned char>(s[j - 1]))) {
+            --j;
+        }
+        const std::size_t digits_len = s.size() - j;
+
+        if (digits_len > 0) {
+            std::string tail = s.substr(j, digits_len);
+            if (tail.size() > 6) {
+                tail = tail.substr(tail.size() - 6);
+            }
+            try {
+                std::int64_t suffix = std::stoll(tail);
+                query_id = BASE + suffix;
+            } catch (...) {
+            }
+        }
+    }
+
     client_manager_->send(client_id_, query_id, std::move(upgrade_gift));
     {
         std::lock_guard lk(times_mutex_);
@@ -141,35 +177,44 @@ void TdInterface::send_query_upgrade()
     sent_.fetch_add(1, std::memory_order_relaxed);
 }
 
-
 void TdInterface::upgrade_loop(int millis)
 {
-    std::vector<std::string> gifts{
-        "700279", //kirpich-
-        "727170", //soska
-        "689019", //knopka-
-        "691933", //ruki-
-        "700281", //doshik
-        "700280", //govno
-        "716987", //medal
-        "727106", //eskimo 
-        "727107", //plmbir 
-        "716986", //marka
-        "691894" //socks-
+    using Item = std::pair<std::string, std::int64_t>;
+    const std::vector<Item> gifts = {
+        {"700279", 25000}, // kirpich-
+        {"727170", 25000}, // soska
+        {"689019", 25000}, // knopka-
+        {"691933", 25000}, // ruki-
+        {"700281", 25000}, // doshik
+        {"700280", 25000}, // govno
+        {"716987", 25000}, // medal
+        {"727106", 25000}, // eskimo
+        {"727107", 25000}, // plmbir
+        {"716986", 25000}, // marka
+        {"691894", 25000}, // socks-
+        {"698277", 25000} // klever
     };
-    int gift_index = 0;
-    while (true)
-    {
-        send_query_upgrade(gifts[gift_index++ % gifts.size()]);
-        {
-            if (!checking.load())
-            {
-                break;
-            }
-        }
+    std::size_t i = 0;
+    while (checking.load()) {
+        const auto& [id, price] = gifts[i++ % gifts.size()];
+        send_query_upgrade(id, price);
         std::this_thread::sleep_for(std::chrono::milliseconds(millis));
     }
-} 
+}
+
+void TdInterface::upgrade_loop(int millis, const std::vector<std::pair<std::string, std::int64_t>>& gifts)
+{
+    if (gifts.empty()) {
+        spdlog::get("logger")->warn("[upgrade_loop] gifts list is empty");
+        return;
+    }
+    std::size_t i = 0;
+    while (checking.load(std::memory_order_acquire)) {
+        const auto& [id, price] = gifts[i++ % gifts.size()];
+        send_query_upgrade(id, static_cast<int>(price));
+        std::this_thread::sleep_for(std::chrono::milliseconds(millis));
+    }
+}
 
 std::uint64_t TdInterface::next_query_id()
 {
@@ -376,9 +421,14 @@ using td_api::int32;
 using td_api::int64;
 
 void TdInterface::test() {
+    const td_api::int64 default_owner = 879292729;
+    test(default_owner);
+}
+
+void TdInterface::test(td_api::int64 owner_user_id) {
     namespace fs = std::filesystem;
 
-    const fs::path out_dir = "gifts";
+    const fs::path out_dir = "gifts_channel";
     std::error_code ec;
     fs::create_directories(out_dir, ec); // ок, если уже существует
 
@@ -411,15 +461,20 @@ void TdInterface::test() {
         });
     };
 
-    const int64 owner_user_id = 879292729; // твой user_id как и раньше
     const std::string bb;                  // business_connection_id пустой
 
     auto fetch_page = std::make_shared<std::function<void(std::string)>>();
 
     *fetch_page = [this, fetch_page, owner_user_id, bb, save_sticker](std::string offset) {
+        td_api::object_ptr<td_api::MessageSender> sender;
+        if (owner_user_id < 0) {
+            sender = td_api::make_object<td_api::messageSenderChat>(owner_user_id);
+        } else {
+            sender = td_api::make_object<td_api::messageSenderUser>(owner_user_id);
+        }
         auto req = td_api::make_object<td_api::getReceivedGifts>(
             bb,
-            td_api::make_object<td_api::messageSenderUser>(owner_user_id),
+            std::move(sender),
             /*exclude_unsaved*/false,
             /*exclude_saved*/false,
             /*exclude_unlimited*/false,
@@ -454,7 +509,7 @@ void TdInterface::test() {
                         if (!reg || !reg->gift_) break;
 
                         // ЛОГ: только id полученного подарка
-                        spdlog::get("output")->info("gift_id={}", received_id);
+                        spdlog::get("output")->info("gift_id={} upg_price={}", received_id, reg->gift_->upgrade_star_count_);
 
                         // Сохранить соответствующий стикер под именем id подарка
                         save_sticker(reg->gift_->sticker_, received_id);

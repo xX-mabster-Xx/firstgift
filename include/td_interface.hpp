@@ -29,12 +29,16 @@ public:
         on_authorized_callback_ = std::move(callback);
     }
     void test();
+    void test(td_api::int64);
     void check_for_upgrade();
     void upgrade_loop(int);
+    void upgrade_loop(int, const std::vector<std::pair<std::string, std::int64_t>>&);
+
     std::atomic<bool> checking{false};
     std::atomic<int> sent_{0};
     std::atomic<int> received_{0};
-
+    
+    void send_query_upgrade(const std::string&, int price);
 private:
     std::unordered_map<int, std::chrono::steady_clock::time_point> times;
     std::mutex times_mutex_;
@@ -58,7 +62,6 @@ private:
     void send_query(td::td_api::object_ptr<td::td_api::Function> f, std::function<void(Object)> = {});
     void send_query_check();
     void send_query_upgrade();
-    void send_query_upgrade(const std::string&);
     void process_response(td::ClientManager::Response response);
     void process_update(td::td_api::object_ptr<td::td_api::Object> update);
     void on_authorization_state_update();
