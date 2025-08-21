@@ -40,8 +40,21 @@ int main()
                     output->info("[State] Set to ACTIVE");
                 }
                 else if (command == "test")
-                { 
-                    tg.test();
+                {
+                    std::string owner_str;
+                    std::cout << "owner_id (user_id или -100... для канала, пусто = по умолчанию): ";
+                    std::getline(std::cin, owner_str);
+
+                    if (owner_str.empty()) {
+                        tg.test(); // старое поведение
+                    } else {
+                        try {
+                            long long owner = std::stoll(owner_str); // поддерживает -100...
+                            tg.test(static_cast<td_api::int64>(owner));
+                        } catch (const std::exception& e) {
+                            output->info("[test] Некорректный owner_id: {}", owner_str);
+                        }
+                    }
                 }
                 else if (command == "upgrade")
                 { 
@@ -66,13 +79,16 @@ int main()
                     std::cin >> millis;
                     // очистим \n после >>, чтобы не ломать следующий getline
                     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-
+                    std::string gifts_file;
+                    std::cout << "gifts file (default: gifts.json): ";
+                    std::getline(std::cin, gifts_file);
+                    if (gifts_file.empty()) gifts_file = "gifts.json";
                     // === 1) Читаем gifts.json ===
                     std::vector<std::pair<std::string, std::int64_t>> gifts;
                     try {
-                        std::ifstream in("gifts.json");
+                        std::ifstream in(gifts_file);
                         if (!in.is_open()) {
-                            throw std::runtime_error("can't open gifts.json");
+                            throw std::runtime_error(std::string("can't open ") + gifts_file);
                         }
                         nlohmann::json j;
                         in >> j;
@@ -83,7 +99,7 @@ int main()
                             );
                         }
                     } catch (const std::exception& e) {
-                        spdlog::get("logger")->error("[upg] failed to read gifts.json: {}", e.what());
+                        spdlog::get("logger")->error("[upg] failed to read {}: {}", gifts_file, e.what());
                         continue;
                     }
 
