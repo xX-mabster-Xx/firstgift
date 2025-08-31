@@ -10,6 +10,7 @@
 #include <locale>
 #include <filesystem>
 #include <chrono>
+#include <unordered_set>
 
 
 std::u16string utf8_to_utf16(const std::string &utf8)
@@ -175,6 +176,88 @@ void TdInterface::send_query_upgrade()
         times[sent_] = std::chrono::steady_clock::now();
     }
     sent_.fetch_add(1, std::memory_order_relaxed);
+}
+
+td_api::object_ptr<td_api::MessageSender> TdInterface::make_sender(td_api::int64 id) {
+    if (id < 0) {
+        return td_api::make_object<td_api::messageSenderChat>(id);
+    } else {
+        return td_api::make_object<td_api::messageSenderUser>(id);
+    }
+}
+
+void TdInterface::buy_loop(int millis, td_api::int64 owner_id)
+{
+    auto seen = std::make_shared<std::unordered_set<td_api::int64>>();
+    spdlog::get("output")->info("[buy_loop] Starting to {} (delay={})", owner_id, millis);
+
+
+    while (buying.load()) {
+        send_query(
+            td_api::make_object<td_api::getAvailableGifts>(),
+            [this, owner_id, seen](Object obj)
+            {
+                if (obj->get_id() == td_api::error::ID) {
+                    auto e = td::move_tl_object_as<td_api::error>(obj);
+                    spdlog::get("logger")->warn("[buy_loop] getAvailableGifts error: {}", to_string(e));
+                    return;
+                }
+                if (obj->get_id() != td_api::availableGifts::ID) {
+                    spdlog::get("logger")->warn("[buy_loop] unexpected object id={} on getAvailableGifts", obj->get_id());
+                    return;
+                }
+
+                auto list = td::move_tl_object_as<td_api::availableGifts>(obj);
+                std::vector<td_api::int64> to_buy;
+
+                for (auto &ag : list->gifts_) {
+                    if (!ag || !ag->gift_) continue;
+                    const auto &g = ag->gift_;
+
+                    const bool is_limited = (g->total_count_ > 0);
+                    const bool has_stock  = (g->remaining_count_ > 0);
+
+                    if (!is_limited || !has_stock) continue;
+
+                    const td_api::int64 &gift_id = g->id_;
+                    if (seen->insert(gift_id).second) {
+                        to_buy.push_back(gift_id);
+                        spdlog::get("output")->info("[buy_loop] NEW limited gift detected: id={} price={} remaining={}",
+                                                     gift_id, g->star_count_, g->remaining_count_);
+                    }
+                }
+                if (to_buy.size() <= 0) {
+                    spdlog::get("output")->info("[buy_loop] No availible gifts");
+                }
+                return;
+                for (const auto &gift_id : to_buy) {
+                    auto req = td_api::make_object<td_api::sendGift>(
+                        gift_id,
+                        make_sender(owner_id),   
+                        td_api::make_object<td_api::formattedText>(
+                            std::string{}, std::vector<td_api::object_ptr<td_api::textEntity>>{}
+                        ), 
+                        true,
+                        false
+                    );
+
+                    send_query(std::move(req),
+                        [gift_id](Object res)
+                        {
+                            if (res->get_id() == td_api::error::ID) {
+                                auto e = td::move_tl_object_as<td_api::error>(res);
+                                spdlog::get("logger")->warn("[buy_loop] sendGift id={} -> error: {}", gift_id, to_string(e));
+                            } else {
+                                spdlog::get("output")->info("[buy_loop] sendGift id={} -> OK ({}", gift_id, res->get_id());
+                            }
+                        }
+                    );
+                }
+            }
+        );
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(millis));
+    }
 }
 
 void TdInterface::upgrade_loop(int millis)

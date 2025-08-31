@@ -66,6 +66,39 @@ int main()
                     std::cin >> price;
                     tg.send_query_upgrade(identifier, price);
                 }
+                else if (command == "buy")
+                {
+                    if (tg.buying.load(std::memory_order_relaxed)) {
+                        output->info("[State] Already buying");
+                        continue;
+                    }
+
+                    // Спросим владельца (user_id для пользователя или -100... для канала)
+                    std::string owner_str;
+                    std::cout << "owner_id (user_id или -100... для канала): ";
+                    std::getline(std::cin, owner_str);
+
+                    long long owner_ll = 0;
+                    try {
+                        owner_ll = std::stoll(owner_str);
+                    } catch (...) {
+                        output->info("[buy] Некорректный owner_id: {}", owner_str);
+                        continue;
+                    }
+
+                    int millis = 1000;
+                    std::cout << "poll interval ms (default 1000): ";
+                    std::string ms_str;
+                    std::getline(std::cin, ms_str);
+                    if (!ms_str.empty()) {
+                        try { millis = std::stoi(ms_str); } catch (...) {}
+                    }
+
+                    tg.buying.store(true, std::memory_order_release);
+                    std::thread([&tg, millis, owner_ll]() {
+                        tg.buy_loop(millis, static_cast<td_api::int64>(owner_ll));
+                    }).detach();
+                }
                 else if (command == "upg")
                 {
                     if (tg.checking.load(std::memory_order_relaxed))
@@ -136,7 +169,17 @@ int main()
                 }
                 else if (command == "stop")
                 {
-
+                    output->info("");
+                    tg.checking.store(false, std::memory_order_relaxed);
+                    tg.buying.store(false, std::memory_order_relaxed); 
+                }
+                else if (command == "stop_buy")
+                {
+                    output->info("");
+                    tg.buying.store(false, std::memory_order_relaxed); 
+                }
+                else if (command == "stop_upg")
+                {
                     output->info("");
                     tg.checking.store(false, std::memory_order_relaxed);
                 }

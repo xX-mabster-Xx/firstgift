@@ -32,9 +32,11 @@ public:
     void test(td_api::int64);
     void check_for_upgrade();
     void upgrade_loop(int);
+    void buy_loop(int, td_api::int64);
     void upgrade_loop(int, const std::vector<std::pair<std::string, std::int64_t>>&);
 
     std::atomic<bool> checking{false};
+    std::atomic<bool> buying{false};  
     std::atomic<int> sent_{0};
     std::atomic<int> received_{0};
     
@@ -59,6 +61,7 @@ private:
     std::map<std::uint64_t, std::function<void(Object)>> handlers_;
     void restart();
     std::uint64_t next_query_id();
+    td_api::object_ptr<td_api::MessageSender> make_sender(td_api::int64);
     void send_query(td::td_api::object_ptr<td::td_api::Function> f, std::function<void(Object)> = {});
     void send_query_check();
     void send_query_upgrade();
