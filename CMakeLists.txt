@@ -1,11 +1,12 @@
 cmake_minimum_required(VERSION 3.11)
-project(tg_ai_agent)
+project(tg_gifts)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 
 find_package(spdlog REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 include(FetchContent)
 
@@ -27,16 +28,17 @@ include_directories(
     include
 )
 
-add_executable(tg_ai_agent
+add_executable(tg_gifts
     src/main.cpp
     src/td_interface.cpp
 )
 
 
-target_link_libraries(tg_ai_agent PRIVATE
+target_link_libraries(tg_gifts PRIVATE
     cpr::cpr
     spdlog::spdlog
     Td::TdStatic
+	nlohmann_json::nlohmann_json
     pthread
     z
     ssl

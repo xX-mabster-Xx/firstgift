@@ -1,9 +1,12 @@
 #include "td_interface.hpp"
 
+#include <fmt/format.h>
 #include <sstream>
 #include <iomanip>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <fmt/color.h>
+#include <fmt/core.h>
 #include <iostream>
 #include <sstream>
 #include <codecvt>
@@ -185,6 +188,7 @@ td_api::object_ptr<td_api::MessageSender> TdInterface::make_sender(td_api::int64
         return td_api::make_object<td_api::messageSenderUser>(id);
     }
 }
+
 
 void TdInterface::buy_loop(int millis, td_api::int64 owner_id)
 {
@@ -413,7 +417,7 @@ void TdInterface::process_response(td::ClientManager::Response response)
             }
             else if (error->code_ == 400 && error->message_ == "Have not enough Telegram Stars")
             {
-                to_log += "E(400): Not enough";
+                to_log += "E(400):" + fmt::format(fg(fmt::color::red)," Not enough");
             }
             else {
                 to_log += "E(" + std::to_string(error->code_) + "): " + error->message_;
@@ -503,9 +507,31 @@ void TdInterface::process_update(object_ptr<td_api::Object> update)
 using td_api::int32;
 using td_api::int64;
 
-void TdInterface::test() {
-    const td_api::int64 default_owner = 879292729;
-    test(default_owner);
+void TdInterface::test()
+{
+    // Получаем текущего пользователя
+    send_query(td_api::make_object<td_api::getMe>(),
+               [this](Object obj)
+               {
+                   if (obj->get_id() == td_api::error::ID)
+                   {
+                       auto e = td::move_tl_object_as<td_api::error>(obj);
+                       spdlog::get("logger")->error("[test] getMe error: {}", to_string(e));
+                       return;
+                   }
+                   if (obj->get_id() != td_api::user::ID)
+                   {
+                       spdlog::get("logger")->error("[test] getMe unexpected object id={}", obj->get_id());
+                       return;
+                   }
+
+                   auto me = td::move_tl_object_as<td_api::user>(obj);
+                   td_api::int64 my_id = me->id_;
+                   spdlog::get("logger")->info("[test] using my user_id={}", my_id);
+
+                   // Дальше используем уже существующую перегрузку
+                   this->test(my_id);
+               });
 }
 
 void TdInterface::test(td_api::int64 owner_user_id) {

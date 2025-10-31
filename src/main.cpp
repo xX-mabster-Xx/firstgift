@@ -158,6 +158,7 @@ int main()
                         }
                     }
                     for (auto cid : channels) {
+						spdlog::get("logger")->info("[channels] getting channel {}", cid);
                         tg.test(static_cast<td_api::int64>(cid));
                     }
 
