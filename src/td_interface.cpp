@@ -218,8 +218,8 @@ void TdInterface::buy_loop(int millis, td_api::int64 owner_id)
                     if (!ag || !ag->gift_) continue;
                     const auto &g = ag->gift_;
 
-                    const bool is_limited = (g->total_count_ > 0);
-                    const bool has_stock  = (g->remaining_count_ > 0);
+                    const bool is_limited = (g->overall_limits_->total_count_ > 0);
+                    const bool has_stock  = (g->overall_limits_->remaining_count_ > 0);
 
                     if (!is_limited || !has_stock) continue;
 
@@ -227,7 +227,7 @@ void TdInterface::buy_loop(int millis, td_api::int64 owner_id)
                     if (seen->insert(gift_id).second) {
                         to_buy.push_back(gift_id);
                         spdlog::get("output")->info("[buy_loop] NEW limited gift detected: id={} price={} remaining={}",
-                                                     gift_id, g->star_count_, g->remaining_count_);
+                                                     gift_id, g->star_count_, g->overall_limits_->remaining_count_);
                     }
                 }
                 if (to_buy.size() <= 0) {
@@ -373,7 +373,7 @@ void TdInterface::process_response(td::ClientManager::Response response)
             auto sentgift = td::move_tl_object_as<td_api::sentGiftRegular>(gift->gift_);
 
             spdlog::get("logger")->info("[Gift] ID: {}, starCount: {}, total: {}, usc: {}",
-                                        sentgift->gift_->id_, sentgift->gift_->star_count_, sentgift->gift_->total_count_, sentgift->gift_->upgrade_star_count_);
+                                        sentgift->gift_->id_, sentgift->gift_->star_count_, sentgift->gift_->overall_limits_->total_count_, sentgift->gift_->upgrade_star_count_);
         }
         else
         {
@@ -584,12 +584,16 @@ void TdInterface::test(td_api::int64 owner_user_id) {
         auto req = td_api::make_object<td_api::getReceivedGifts>(
             bb,
             std::move(sender),
+			/*collection_id*/0,	
             /*exclude_unsaved*/false,
             /*exclude_saved*/false,
             /*exclude_unlimited*/false,
-            /*exclude_limited*/false,
+            /*exclude_upgradable*/false,
+            /*exclude_non_upgradable*/false,
             /*exclude_upgraded*/false,
             /*sort_by_price*/false,
+			false,
+			false,
             offset,
             /*limit*/100
         );
